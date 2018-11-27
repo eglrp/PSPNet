@@ -1,5 +1,7 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-author: leilei
+@author: leilei
 """
 
 import torch
@@ -26,7 +28,7 @@ def conv3x3_bn_relu(in_planes, out_planes, stride=1):
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding and no bias"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride, padding=1, 
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, 
                                    bias=False)
 
 def conv1x1(in_planes, out_planes, stride=1):
@@ -35,7 +37,8 @@ def conv1x1(in_planes, out_planes, stride=1):
 
 def atrous_conv3x3(in_planes, out_planes, rate=1, padding=1, stride=1):
     """3x3  atrous convolution and no bias"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride, padding, rate, bias=False)
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=padding, 
+                     dilation=rate, bias=False)
     
 class Bottleneck(nn.Module):
     expansion = 4
@@ -43,7 +46,7 @@ class Bottleneck(nn.Module):
     def __init__(self, first_inplanes, inplanes, planes, rate=1, padding=1, stride=1, downsample=None):
         '''
         pspnet conv1_3's num_output=128 not 64 so we modify some code
-        first_inplanes: only layer1 not same (conv1_3)128 != (layer1-block1-conv1k_2s)64
+        first_inplanes: only layer1 not same (conv1_3)128 != (layer1-block1-conv1k_1s)64
         '''
         super().__init__()
         self.conv1 = conv1x1(inplanes, planes, stride)####
@@ -56,8 +59,8 @@ class Bottleneck(nn.Module):
         self.downsample = downsample
         self.stride = stride
         
-        # weight shape is origial ,no update. only first layer1 block in_channel different
-        if first_inplanes != inplanes and downsample is not None:
+        # only first layer1 block in_channel different
+        if (first_inplanes != inplanes) and (downsample is not None):
             self.conv1 = conv1x1(first_inplanes, planes, stride)
             self.downsample = nn.Sequential(conv1x1(first_inplanes, planes * self.expansion, stride),
                                             nn.BatchNorm2d(planes * self.expansion))
@@ -96,8 +99,26 @@ class SppBlock(nn.Module):
         x = F.adaptive_avg_pool2d(x, output_size=(self.level,self.level))# average pool
         x = self.convblock(x)
         x = F.upsample(x, size=size, mode='bilinear', align_corners=True)
+        
         return x
 
+class SppBlock1(nn.Module):
+    # no bias k=10/20/30/60
+    def __init__(self, level, k, s, in_channel=2048, out_numput=512):
+        super().__init__()
+        self.level = level
+        self.avgpool = nn.AvgPool2d(k, s)
+        self.convblock = nn.Sequential( conv1x1(in_channel, out_numput),
+                                       nn.BatchNorm2d(out_numput),nn.ReLU(inplace=True))
+        
+    def forward(self,x):
+        size = x.shape[2:]
+        x = self.avgpool(x)
+        x = self.convblock(x)
+        x = F.upsample(x, size=size, mode='bilinear', align_corners=True)
+        
+        return x
+        
 class SPP(nn.Module):
     def __init__(self,in_channel=2048):
         super().__init__()
@@ -113,6 +134,7 @@ class SPP(nn.Module):
         x3 = self.spp3(x)
         x6 = self.spp6(x)
         out = torch.cat([x,x1,x2,x3,x6],dim=1)
+        
         return out
         
 class PSPNet(nn.Module):
@@ -125,18 +147,20 @@ class PSPNet(nn.Module):
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         
         self.layer1 = self._make_layer(block, 128, 64, layers[0]) # 64 / 256
-        self.layer2 = self._make_layer(block, 128, 128, layers[1], stride=2) # 128 / 512
-        self.layer3 = self._make_layer(block, 256, 256, layers[2], rate=2, padding=2) # 256 / 1024
-        self.layer4 = self._make_layer(block, 512, 512, layers[2], rate=4, padding=4) # 512 / 2048
+        self.layer2 = self._make_layer(block, 256, 128, layers[1], stride=2) # 128 / 512
+        self.layer3 = self._make_layer(block, 512, 256, layers[2], rate=2, padding=2) # 256 / 1024
+        self.layer4 = self._make_layer(block, 1024, 512, layers[2], rate=4, padding=4) # 512 / 2048
         
         self.spp = SPP(in_channel=2048)
-        self.conv5_4 = conv3x3_bn_relu(2048+512*4, 512)
+        
+        self.conv5_4 = conv3x3_bn_relu(2048+512*4, 512)##if you want modify in_channel, need your own modify##
         
         self.dropout = nn.Dropout2d(p=dropout_rate)
         self.conv6 = nn.Conv2d(512, class_number, 1, 1)
         
         ''' init weight '''
         for m in self.modules():
+            print('## init weight ##')
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
@@ -162,15 +186,15 @@ class PSPNet(nn.Module):
         x = self.conv6(x)
         x = F.upsample(x, size, mode='bilinear', align_corners=True)
         
+        return x
         
         '''first_inplanes, inplanes, planes, rate=1, padding=1, stride=1, downsample=None'''
     def _make_layer(self, block, first_inplanes, planes, blocks, rate=1, padding=1, stride=1):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
-                conv1x1(self.inplanes, planes * block.expansion, stride),
-                nn.BatchNorm2d(planes * block.expansion),
-            )
+                conv1x1(self.inplanes, planes * block.expansion, stride),# with down stride same
+                nn.BatchNorm2d(planes * block.expansion))
 
         layers = []
         layers.append(block(first_inplanes, self.inplanes, planes, rate, padding, stride, downsample))
@@ -182,15 +206,8 @@ class PSPNet(nn.Module):
 
 
 def pspnet(class_number, dropout_rate=1):
-    ''' input size: [473,473] '''
-    model = PSPNet(Bottleneck, layers=[3,4,6,3], class_number, dropout_rate)
+    model = PSPNet(Bottleneck, layers=[3,4,6,3], class_number=class_number, dropout_rate=dropout_rate)
     return model
-
-
-
-
-
-
 
 
 
