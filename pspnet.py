@@ -159,8 +159,8 @@ class PSPNet(nn.Module):
         self.conv6 = nn.Conv2d(512, class_number, 1, 1)
         
         ''' init weight '''
+        print('## init weight ##')
         for m in self.modules():
-            print('## init weight ##')
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 if m.bias is not None:
@@ -169,7 +169,6 @@ class PSPNet(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
             # no convtranspose linear
-        
     def forward(self,x):
         size = x.shape[2:]
         x = self.conv1_1(x)
