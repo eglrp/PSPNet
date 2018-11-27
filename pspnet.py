@@ -118,6 +118,7 @@ class SPP(nn.Module):
 class PSPNet(nn.Module):
     def __init__(self, block, layers, class_number, dropout_rate=0.2, in_channel=3):
         super().__init__()
+        self.inplanes = 64
         self.conv1_1 = conv3x3_bn_relu(in_channel, 64, stride=2)
         self.conv1_2 = conv3x3_bn_relu(64, 64)
         self.conv1_3 = conv3x3_bn_relu(64, 128)
