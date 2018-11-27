@@ -181,6 +181,7 @@ class PSPNet(nn.Module):
 
 
 def pspnet(class_number, dropout_rate=1):
+    ''' input size: [473,473] '''
     model = PSPNet(Bottleneck, layers=[3,4,6,3], class_number, dropout_rate)
     return model
 
